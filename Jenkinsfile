@@ -49,13 +49,7 @@ pipeline {
         stage('5.SSH上传jar到服务器') {
             steps {
                 script {
-                    def remote = [:]
-                    remote.name = 'remote-server'
-                    remote.host = env.REMOTE_HOST
-                    remote.user = env.REMOTE_USER
-                    remote.credentialsId = env.REMOTE_CRED_ID
-                    remote.allowAnyHosts = true  // 加上这个，跳过主机密钥校验，很多人漏这个！
-
+                    def remote = getRemote()
                     sshPut remote: remote, from: "target/${JAR_NAME}", into: env.REMOTE_DEPLOY_DIR
                 }
                 echo "✅ jar包上传完成"
@@ -65,13 +59,7 @@ pipeline {
         stage('6.远程部署服务') {
             steps {
                 script {
-                    def remote = [:]
-                    remote.name = 'remote-server'
-                    remote.host = env.REMOTE_HOST
-                    remote.user = env.REMOTE_USER
-                    remote.credentialsId = env.REMOTE_CRED_ID
-                    remote.allowAnyHosts = true
-
+                    def remote = getRemote()
                     sshCommand remote: remote,
                         command: """
                             cd ${REMOTE_DEPLOY_DIR}
@@ -96,13 +84,7 @@ pipeline {
         stage('7.健康检查') {
             steps {
                 script {
-                    def remote = [:]
-                    remote.name = 'remote-server'
-                    remote.host = env.REMOTE_HOST
-                    remote.user = env.REMOTE_USER
-                    remote.credentialsId = env.REMOTE_CRED_ID
-                    remote.allowAnyHosts = true
-
+                    def remote = getRemote()
                     sshCommand remote: remote,
                         command: """
                             if ss -tulpn | grep :${SERVER_PORT} > /dev/null; then
@@ -126,4 +108,15 @@ pipeline {
             echo "❌ 流水线失败，请查看各阶段日志排查"
         }
     }
+}
+
+// 抽取公共remote对象
+def getRemote() {
+    def remote = [:]
+    remote.name = 'remote-server'
+    remote.host = env.REMOTE_HOST
+    remote.user = env.REMOTE_USER
+    remote.credentialsId = env.REMOTE_CRED_ID
+    remote.allowAnyHosts = true
+    return remote
 }
