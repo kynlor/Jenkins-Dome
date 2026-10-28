@@ -9,12 +9,6 @@ pipeline {
         JAR_NAME = "web-demo-0.0.1-SNAPSHOT.jar"
         SERVER_PORT = '8080'
     }
-    def remoteConf = [
-        name: 'remote-server',
-        host: env.REMOTE_HOST,
-        username: env.REMOTE_USER,
-        credentialsId: env.REMOTE_CRED_ID
-    ]
 
     stages {
         stage('1.拉取代码') {
@@ -54,47 +48,72 @@ pipeline {
 
         stage('5.SSH上传jar到服务器') {
             steps {
-                sshPut remote: remoteConf,
-                    from: "target/${JAR_NAME}",
-                    into: env.REMOTE_DEPLOY_DIR
+                script {
+                    def remote = [:]
+                    remote.name = 'remote-server'
+                    remote.host = env.REMOTE_HOST
+                    remote.user = env.REMOTE_USER
+                    remote.credentialsId = env.REMOTE_CRED_ID
+                    remote.allowAnyHosts = true  // 加上这个，跳过主机密钥校验，很多人漏这个！
+
+                    sshPut remote: remote, from: "target/${JAR_NAME}", into: env.REMOTE_DEPLOY_DIR
+                }
                 echo "✅ jar包上传完成"
             }
         }
 
         stage('6.远程部署服务') {
             steps {
-                sshCommand remote: remoteConf,
-                    command: """
-                        cd ${REMOTE_DEPLOY_DIR}
-                        PID=\$(ps -ef | grep ${JAR_NAME} | grep -v grep | awk '{print \$2}')
-                        if [ -n "\$PID" ]; then
-                            echo "停止旧进程 PID: \$PID"
-                            kill -9 \$PID
-                            sleep 2
-                        fi
-                        if [ -f ${JAR_NAME} ]; then
-                            mv ${JAR_NAME} ${JAR_NAME}.bak.\$(date +%Y%m%d%H%M)
-                        fi
-                        nohup java -jar ${JAR_NAME} --server.port=${SERVER_PORT} > app.log 2>&1 &
-                        echo "新服务已启动，端口 ${SERVER_PORT}"
-                        sleep 5
-                    """
+                script {
+                    def remote = [:]
+                    remote.name = 'remote-server'
+                    remote.host = env.REMOTE_HOST
+                    remote.user = env.REMOTE_USER
+                    remote.credentialsId = env.REMOTE_CRED_ID
+                    remote.allowAnyHosts = true
+
+                    sshCommand remote: remote,
+                        command: """
+                            cd ${REMOTE_DEPLOY_DIR}
+                            PID=\$(ps -ef | grep ${JAR_NAME} | grep -v grep | awk '{print \$2}')
+                            if [ -n "\$PID" ]; then
+                                echo "停止旧进程 PID: \$PID"
+                                kill -9 \$PID
+                                sleep 2
+                            fi
+                            if [ -f ${JAR_NAME} ]; then
+                                mv ${JAR_NAME} ${JAR_NAME}.bak.\$(date +%Y%m%d%H%M)
+                            fi
+                            nohup java -jar ${JAR_NAME} --server.port=${SERVER_PORT} > app.log 2>&1 &
+                            echo "新服务已启动，端口 ${SERVER_PORT}"
+                            sleep 5
+                        """
+                }
                 echo "✅ 服务部署完成"
             }
         }
 
         stage('7.健康检查') {
             steps {
-                sshCommand remote: remoteConf,
-                    command: """
-                        if ss -tulpn | grep :${SERVER_PORT} > /dev/null; then
-                            echo "✅ 服务端口${SERVER_PORT}已启动，健康检查通过"
-                        else
-                            echo "❌ 服务启动失败，查看日志："
-                            tail -20 ${REMOTE_DEPLOY_DIR}/app.log
-                            exit 1
-                        fi
-                    """
+                script {
+                    def remote = [:]
+                    remote.name = 'remote-server'
+                    remote.host = env.REMOTE_HOST
+                    remote.user = env.REMOTE_USER
+                    remote.credentialsId = env.REMOTE_CRED_ID
+                    remote.allowAnyHosts = true
+
+                    sshCommand remote: remote,
+                        command: """
+                            if ss -tulpn | grep :${SERVER_PORT} > /dev/null; then
+                                echo "✅ 服务端口${SERVER_PORT}已启动，健康检查通过"
+                            else
+                                echo "❌ 服务启动失败，查看日志："
+                                tail -20 ${REMOTE_DEPLOY_DIR}/app.log
+                                exit 1
+                            fi
+                        """
+                }
             }
         }
     }
