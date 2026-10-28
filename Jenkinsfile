@@ -8,7 +8,7 @@ pipeline {
         REMOTE_USER = 'root'                // 服务器用户名，一般是root
         REMOTE_CRED_ID = 'remote-server-ssh' // 后面要在Jenkins配的SSH凭证ID
         REMOTE_DEPLOY_DIR = '/opt/app/web-demo' // 服务器上的部署目录，自己建
-        JAR_NAME = 'webdemo-0.0.1-SNAPSHOT.jar' // 你的jar包名，后面根据target里的实际名字改
+        JAR_NAME = "web-demo-0.0.1-SNAPSHOT.jar" // 你的jar包名，后面根据target里的实际名字改
         SERVER_PORT = '8080'               // 项目运行端口，和你SpringBoot配置一致
     }
 
