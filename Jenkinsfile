@@ -50,7 +50,21 @@ pipeline {
             steps {
                 script {
                     def remote = getRemote()
-                    sshPut remote: remote, from: "target/${JAR_NAME}", into: env.REMOTE_DEPLOY_DIR
+                    // sshPut 不会自动创建远程目录，先确保目录存在，并备份旧jar
+                    sshCommand remote: remote,
+                        command: """
+                            mkdir -p ${REMOTE_DEPLOY_DIR}
+                            cd ${REMOTE_DEPLOY_DIR}
+                            if [ -f ${JAR_NAME} ]; then
+                                mv ${JAR_NAME} ${JAR_NAME}.bak.\$(date +%Y%m%d%H%M%S)
+                            fi
+                        """
+                    retry(3) {
+                        sshPut remote: remote, from: "target/${JAR_NAME}", into: "${REMOTE_DEPLOY_DIR}/"
+                    }
+                    // 确认上传成功
+                    sshCommand remote: remote,
+                        command: "ls -lh ${REMOTE_DEPLOY_DIR}/${JAR_NAME}"
                 }
                 echo "✅ jar包上传完成"
             }
@@ -63,17 +77,24 @@ pipeline {
                     sshCommand remote: remote,
                         command: """
                             cd ${REMOTE_DEPLOY_DIR}
-                            PID=\$(ps -ef | grep ${JAR_NAME} | grep -v grep | awk '{print \$2}')
+                            # 优先用 pid 文件找旧进程；没有 pid 文件时用锚定到行首的方式匹配 java 进程，
+                            # 避免 ps|grep 把当前 ssh 执行的 shell 自己也匹配进去导致误杀
+                            PID=""
+                            if [ -f app.pid ]; then
+                                PID=\$(cat app.pid 2>/dev/null)
+                            fi
+                            if [ -z "\$PID" ] || ! kill -0 \$PID 2>/dev/null; then
+                                PID=\$(pgrep -f "^java -jar ${JAR_NAME}" | head -1)
+                            fi
                             if [ -n "\$PID" ]; then
                                 echo "停止旧进程 PID: \$PID"
-                                kill -9 \$PID
-                                sleep 2
-                            fi
-                            if [ -f ${JAR_NAME} ]; then
-                                mv ${JAR_NAME} ${JAR_NAME}.bak.\$(date +%Y%m%d%H%M)
+                                kill \$PID 2>/dev/null
+                                sleep 3
+                                kill -0 \$PID 2>/dev/null && kill -9 \$PID
                             fi
                             nohup java -jar ${JAR_NAME} --server.port=${SERVER_PORT} > app.log 2>&1 &
-                            echo "新服务已启动，端口 ${SERVER_PORT}"
+                            echo \$! > app.pid
+                            echo "新服务已启动，端口 ${SERVER_PORT}，PID \$!"
                             sleep 5
                         """
                 }
@@ -115,8 +136,25 @@ def getRemote() {
     def remote = [:]
     remote.name = 'remote-server'
     remote.host = env.REMOTE_HOST
-    remote.user = env.REMOTE_USER
-    remote.credentialsId = env.REMOTE_CRED_ID
     remote.allowAnyHosts = true
+    remote.retryCount = 3          // 连接失败自动重试3次
+    remote.retryWaitSec = 5        // 每次重试间隔5秒
+    remote.timeoutSec = 60         // SSH连接超时60秒
+
+    // 注意：ssh-steps 插件不支持 remote.credentialsId（该字段会被忽略），
+    // 必须先用 withCredentials 把凭据里的私钥取出来，再通过 remote.identity 传给 JSch。
+    withCredentials([sshUserPrivateKey(
+        credentialsId: env.REMOTE_CRED_ID,
+        keyFileVariable: 'SSH_KEY_FILE',
+        passphraseVariable: 'SSH_PASSPHRASE',
+        usernameVariable: 'SSH_USERNAME'
+    )]) {
+        remote.user = env.SSH_USERNAME ?: env.REMOTE_USER
+        // readFile 读出的是私钥内容（String），ssh-steps 会把它当作 identity 内容使用
+        remote.identity = readFile(env.SSH_KEY_FILE)
+        if (env.SSH_PASSPHRASE) {
+            remote.passphrase = env.SSH_PASSPHRASE
+        }
+    }
     return remote
 }
